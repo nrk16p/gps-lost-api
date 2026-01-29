@@ -35,8 +35,8 @@ if not TERMINUS_USER or not TERMINUS_PASS:
 # ============================================================
 # CONFIG
 # ============================================================
-BASE_URL  = "https://api-v2.terminusfleet.com/api/servicerepairdevice"
-LOGIN_URL = "https://app-v2.terminusfleet.com/"
+BASE_URL   = "https://api-v2.terminusfleet.com/api/servicerepairdevice"
+LOGIN_URL  = "https://app-v2.terminusfleet.com/"
 COMPANY_ID = 31
 
 app = FastAPI(title="data_lost_gps API")
@@ -157,7 +157,7 @@ def fetch_terminus_data() -> pd.DataFrame:
         },
         "company_id": COMPANY_ID
     }
-    print(token)
+
     all_results = []
     page = 1
 
@@ -216,10 +216,8 @@ def fetch_atms_data() -> pd.DataFrame:
 
     final_df = pd.concat(all_results, ignore_index=True)
 
-    # normalize header (SAFETY)
     final_df.columns = final_df.columns.astype(str).str.strip()
 
-    # 🔒 ORIGINAL MAPPING (DO NOT CHANGE)
     rename_map = {
         "หัว": "ยี่ห้อ",
         "Unnamed: 7": "เบอร์รถ",
@@ -239,14 +237,9 @@ def fetch_atms_data() -> pd.DataFrame:
     ]
 
 # ============================================================
-# API
+# CORE REPORT LOGIC (SHARED)
 # ============================================================
-@app.get("/")
-def home():
-    return {"message": "data_lost_gps API is running"}
-
-@app.get("/download")
-def download_excel():
+def build_report_df() -> pd.DataFrame:
     df_service = fetch_terminus_data()
 
     df_service["gps_active_at"] = pd.to_datetime(
@@ -271,14 +264,25 @@ def download_excel():
         how="inner"
     )
 
-    merged = merged[
+    return merged[
         ["ฟลีท", "สเตตัส", "เบอร์รถ", "ทะเบียน",
          "รหัส", "ชื่อ", "เบอร์โทร",
          "gps_active_at", "diff", "over_2h", "diff_fmt"]
     ]
 
+# ============================================================
+# API
+# ============================================================
+@app.get("/")
+def home():
+    return {"message": "data_lost_gps API is running"}
+
+@app.get("/download")
+def download_excel():
+    df = build_report_df()
+
     output = io.BytesIO()
-    merged.to_excel(output, index=False, engine="openpyxl")
+    df.to_excel(output, index=False, engine="openpyxl")
     output.seek(0)
 
     filename = datetime.today().strftime("%d%m%Y") + "_data.xlsx"
@@ -288,3 +292,21 @@ def download_excel():
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+# ============================================================
+# CLI ENTRY (FOR JENKINS)
+# ============================================================
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run-date", default="")
+    parser.add_argument("--out", required=True)
+    args = parser.parse_args()
+
+    os.makedirs(os.path.dirname(args.out), exist_ok=True)
+
+    df = build_report_df()
+    df.to_excel(args.out, index=False, engine="openpyxl")
+
+    print(f"✅ Report saved to {args.out}")
